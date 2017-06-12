@@ -23,16 +23,19 @@ class HockeyTeamScraper(SportsDataScraper):
     __url_regex = __url_base + '(.*)/'
     __defunct_tag = ' (defunct)'
 
-    @staticmethod
-    def __get_url(year, team_name):
-        return HockeyTeamScraper.__team_url_base.replace(SportsDataScraper._team_token, team_name) \
-            .replace(SportsDataScraper._year_token, str(year))
-
     @abc.abstractmethod
     def scrape(self, start_year, end_year, read_cache=True, write_cache=True):
         return self.scrape_teams(start_year, end_year,
                                  set([x['Abbrev'] for x in self.all_team_names]),
                                  read_cache, write_cache)
+
+    def scrape_teams(self, start_year, end_year, teams, read_cache=True, write_cache=True):
+        first, last = SportsDataScraper.validate_start_end_years(start_year, end_year, self._config)
+
+        for year in range(last, first, -1):
+            for team in teams:
+                # TODO: are we going to save this, or just write to disk?
+                self.__get_team_for_year(year, team, read_cache, write_cache)
 
     def get_teams_overview(self, read_cache=True, write_cache=True, cache_filename=None):
         if (read_cache or write_cache) and not cache_filename:
@@ -57,6 +60,18 @@ class HockeyTeamScraper(SportsDataScraper):
 
         with io.StringIO(str_team_data) as in_file:
             return list(csv.DictReader(in_file))
+
+    def get_all_identities_for_team(self, abbr):
+        links = self.get_element_by_css(url=self.__url_base + abbr, css='#' + abbr + ' > tbody td:nth-child(3)')
+        for link in links:
+            self._dbg_print('found a link with text = "' + link.get_attribute('innerHTML') + '"')
+
+            inner_html = link.get_attribute('innerHTML')
+            link_pattern = '^<a href="\/teams\/(.+)\/(.+).html">(.+)<\/a>(.*)$'
+            reg = re.match(link_pattern, inner_html)
+            if reg:
+                abbrev, year, name, made_playoffs = reg.groups()
+                return year, abbrev, name, len(made_playoffs) > 0
 
     def __init_team_names(self, read_cache=True, write_cache=True, cache_filename=None):
         team_names = set()  # list of (abbreviation, full_name) tuples
@@ -83,7 +98,6 @@ class HockeyTeamScraper(SportsDataScraper):
                     team_names.add((abbrev, name))
 
             for abbr, name in team_names:
-                # TODO: when loading from cache, you get teams like MDA which don't have a page...
                 team_abbrevs = self.get_all_identities_for_team(abbr)  # will eval to False if not found
                 if team_abbrevs:
                     team_identities.append(team_abbrevs)
@@ -101,24 +115,13 @@ class HockeyTeamScraper(SportsDataScraper):
 
         return ret_val_csv
 
-    def get_all_identities_for_team(self, abbr):
-        links = self.get_element_by_css(url=self.__url_base + abbr, css='#' + abbr + ' > tbody td:nth-child(3)')
-        for link in links:
-            # print('found a link with text = "' + link.get_attribute('innerHTML') + '"')
-            inner_html = link.get_attribute('innerHTML')
-            link_pattern = '^<a href="\/teams\/(.+)\/(.+).html">(.+)<\/a>(.*)$'
-            reg = re.match(link_pattern, inner_html)
-            if reg:
-                abbrev, year, name, made_playoffs = reg.groups()
-                return year, abbrev, name, len(made_playoffs) > 0
-
     def __get_team_stats(self):
         cache_path = os.path.join(self._get_base_cache_path_for_sport(), 'active_teams.csv')
         active_teams = self.get_csv_table(self.__url_base, '#all_active_franchises',
                                           hide_partial_rows=True,
                                           cache_filename=cache_path)
 
-        print('Trying to get defunct teams...')
+        self._dbg_print('Trying to get defunct teams...')
         cache_path = re.sub('active', 'defunct', cache_path)
         defunct_teams = self.get_csv_table(self.__url_base, '#all_defunct_franchises',
                                            hide_partial_rows=True,
@@ -141,25 +144,64 @@ class HockeyTeamScraper(SportsDataScraper):
 
         return '\n'.join(all_teams)
 
-    def scrape_teams(self, start_year, end_year, teams, read_cache=True, write_cache=True):
-        first, last = SportsDataScraper.validate_start_end_years(start_year, end_year, self._config)
-
-        all_results = {}
-        for year in range(last, first, -1):
-            for team in teams:
-                self.__get_team_for_year(year, team, read_cache, write_cache)
-
     def __get_team_for_year(self, year, team, read_cache=True, write_cache=True):
+        ret_val = {}
+
+        self._dbg_print('Pulling team data for Year: "{0}", Team: "{1}"'.format(year, team))
+
         if not self.__did_team_exist(team, year):
-            print('Team {0} did not exist in the year {1}. Skipping...'.format(team, year))
+            self._dbg_print('Team {0} did not exist in the year {1}. Skipping...'.format(team, year))
             return None
 
-        cache_directory = os.path.join(self._get_base_cache_path_for_sport(), 'teams', str(year), team)
-        cache_roster_filename = os.path.join(cache_directory, 'roster.csv')
+        season_tables = ['roster', 'goalies', 'skaters']
+        playoff_tables = ['goalies_playoffs', 'skaters_playoffs']
+        games_tables = ['games']  # games live on a different url, e.g., '/teams/MTL/1943_games.html'
 
-        roster = self.get_csv_table(HockeyTeamScraper.__get_url(year, team), '#all_roster',
-                                    read_cache, write_cache, cache_roster_filename)
-        pass
+        if int(year) > 2007:
+            season_tables += ['stats_adv_rs', 'stats_toi']
+            playoff_tables += ['stats_adv_pl']
+        if int(year) > 2008:
+            season_tables += ['shootout', 'shootout_goalies']
+
+        for t in season_tables:
+            ret_val[t] = self.__get_team_page_component(t, year, team,
+                                                        read_cache=read_cache, write_cache=write_cache)
+
+        if self.__did_team_make_playoffs(team, year):
+            for t in playoff_tables:
+                ret_val[t] = self.__get_team_page_component(t, year, team,
+                                                            read_cache=read_cache, write_cache=write_cache)
+
+        games_url = self.__get_url(year, team).replace('.html', '_games.html')
+        if self.__did_team_make_playoffs(team, year):
+            games_tables += ['games_playoffs']
+        for t in games_tables:
+            ret_val[t] = self.__get_team_page_component(t, year, team, games_url, read_cache, write_cache)
+
+        return ret_val
+
+    def __get_team_page_component(self, table_name, year, team, url='', read_cache=True, write_cache=True):
+        cache_directory = os.path.join(self._get_base_cache_path_for_sport(), 'teams', str(year), team)
+        cache_filename = os.path.join(cache_directory, '{0}.csv'.format(table_name))
+        if not url:
+            url = HockeyTeamScraper.__get_url(year, team)
+
+        self._dbg_print('Pulling {1} "{2}" stats for {0}'.format(team, year, table_name))
+
+        return self.get_csv_table(url, '#all_{0}'.format(table_name), read_cache, write_cache, cache_filename)
+
+    @staticmethod
+    def __get_url(year, team_name):
+        return HockeyTeamScraper.__team_url_base.replace(SportsDataScraper._team_token, team_name) \
+            .replace(SportsDataScraper._year_token, str(year))
 
     def __did_team_exist(self, team, year):
         return len([x for x in self.all_team_names if x['Abbrev'] == team and x['Year'] == str(year)]) > 0
+
+    # Hockey-Reference does already have 2017 playoff data online, but the teams who made the
+    # playoffs in 2017 aren't yet marked as having done so on their franchise page. (2017-Jun-08)
+    def __did_team_make_playoffs(self, team, year):
+        return len([x for x in self.all_team_names
+                    if x['Abbrev'] == team
+                    and x['Year'] == str(year)
+                    and x['Made_Playoffs'] == str(True).upper()]) > 0

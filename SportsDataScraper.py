@@ -1,18 +1,28 @@
 import abc
 import os
+import time
 
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.firefox.webdriver import WebDriver
 
 
-# TODO: how do I differentiate between requests to pull many pages into one dataset,
-# TODO: and those that pull a single page into many datasets?
+def _get_if_needed(self, url):
+    if self.current_url != url:
+        self.get(url)
+
+
+WebDriver.get_if_needed = _get_if_needed
+
+
+# TODO: how to support both (many pages > one dataset) and (one page > many datasets)?
 
 
 class SportsDataScraper:
     __metaclass__ = abc.ABCMeta
 
+    _debug = False
     _config = None
     _driver = webdriver.Firefox()
     _year_token = '-YEAR-'
@@ -22,7 +32,10 @@ class SportsDataScraper:
     _css_selector_token = '-CSSBASE-'
 
     __hasmore_css_path = _css_selector_token + ' > div.section_heading > div > ul > li.hasmore '
-    __csv_button_selector = '> div > ul > li:nth-child(4) > button'
+    __csv_button_selector = ' > div > ul > li:nth-child(4) > button'
+
+    def __init__(self, debug=False):
+        self._debug = debug
 
     def __del__(self):
         try:
@@ -31,35 +44,10 @@ class SportsDataScraper:
         except:
             pass
 
-    def _get_base_cache_path_for_sport(self):
-        return os.path.join(os.path.curdir, 'cache', self._config.league_name)
-
-    def _scroll_to_element(self, element):
-        print('scrolling element "{0}" into view...'.format(element.text))
-        driver = self._driver
-        driver.execute_script('arguments[0].scrollIntoView(true);', element)
-        driver.execute_script('window.scrollBy(0, -100);')
-
-    def _hover_element(self, element):
-        try:
-            print('trying to hover to element with text "{0}"...'.format(element.text))
-            driver = self._driver
-            """
-            if element:
-                element.screenshot('hover_me.png')
-            else:
-                print('Tried to screenshot element with text "{0}", but can\'t find it!'.format(element.text))
-            """
-            hov = ActionChains(driver).move_to_element(element)
-            hov.perform()
-        except Exception as e:
-            print(e)
-            pass
-
     def get_element_by_css(self, url, css):
         driver = self._driver
-        driver.get(url)
-        # TODO: handle not-found case by returning []
+        driver.get_if_needed(url)
+        # TODO: handle not-found case by returning [] or False
         return driver.find_element_by_css_selector(css)
 
     def get_html_table(self, url, css_table_name):
@@ -71,80 +59,50 @@ class SportsDataScraper:
             cached_stats = SportsDataScraper._read_cache_data(cache_filename)
 
             if cached_stats:
-                # print('found a cached copy of {0}\'s {1} table, not contacting the web after all.'
-                #       .format(url, css_table_name))
+                self._dbg_print('found a cached copy of {0}\'s {1} table, not contacting the web after all.'
+                                .format(url, css_table_name))
                 return cached_stats
 
         selector_base = SportsDataScraper.__hasmore_css_path.replace(SportsDataScraper._css_selector_token,
                                                                      css_table_name)
 
-        if not self._driver:
+        if not self._driver or self._driver.start_client():
             self._driver = webdriver.Firefox()
         driver = self._driver
 
-        try:
-            driver.get(url)
+        driver.get_if_needed(url)
 
-            if hide_partial_rows:
-                partial_rows_button = driver.find_element_by_css_selector(css_table_name +
-                                                                          " button[id$='_toggle_partial_table']")
+        if hide_partial_rows:
+            partial_rows_button = driver.find_element_by_css_selector(css_table_name +
+                                                                      " button[id$='_toggle_partial_table']")
 
-                if partial_rows_button:
-                    partial_rows_button.click()
-                else:
-                    print('Could not find the partial rows button. = (')
-
-            sharing_dropdown = driver.find_element_by_css_selector(selector_base + '> span')
-            if sharing_dropdown:
-                self._scroll_to_element(sharing_dropdown)
-                self._hover_element(sharing_dropdown)
-
-            get_csv_button = driver.find_element_by_css_selector(
-                selector_base + self.__csv_button_selector)
-
-            if get_csv_button:
-                self._scroll_to_element(get_csv_button)
-                self._hover_element(get_csv_button)
-                get_csv_button.click()
-                # TODO: not properly hovering Get CSV button. Is it the -100 scroll?
-
-                '''to generalize, it should probably look for a "pre" tag inside the table container
-                or use the name of the original table to get the csv table name
-                (they usually have the name "#csv_stats" based on a table name of "#all_stats)
-                but if we've only clicked one "get csv" button, it should be the only "pre" on the page'''
-                these_stats = driver.find_element_by_css_selector('pre').text
-                # print(these_stats)
+            if partial_rows_button:
+                partial_rows_button.click()
             else:
-                raise NoSuchElementException('Could not find the button to get CSV stats!')
-        finally:
-            driver.close()
+                print('Could not find the partial rows button. = (')
+
+        sharing_dropdown = driver.find_element_by_css_selector(selector_base + '> span')
+        if sharing_dropdown:
+            self._scroll_to_element(sharing_dropdown)
+            self._hover_element(sharing_dropdown)
+        else:
+            raise NoSuchElementException('Could not find the "Sharing" dropdown!')
+
+        get_csv_button = driver.find_element_by_css_selector(selector_base + self.__csv_button_selector)
+
+        if get_csv_button:
+            get_csv_button.click()
+
+            # the web version of the table is e.g., "#all_skaters" and the <pre>-wrapped csv is "#csv_skaters"
+            csv_stats = driver.find_element_by_css_selector(css_table_name.replace('#all', '#csv')).text
+            # self._dbg_print('Woo, found some stats!\n\n{0}\n'.format(csv_stats))
+        else:
+            raise NoSuchElementException('Could not find the button to get CSV stats!')
 
         if write_cache and cache_filename:
-            SportsDataScraper._write_cache_data(these_stats, cache_filename)
+            SportsDataScraper._write_cache_data(csv_stats, cache_filename)
 
-        return these_stats
-
-    @staticmethod
-    def _read_cache_data(filename):
-        data = None
-        if os.path.exists(filename):
-            copy_file = open(filename, 'r')
-            data = ''.join(copy_file.readlines())
-            copy_file.close()
-        return data
-
-    @staticmethod
-    def _write_cache_data(data, filename):
-        cache_dir = os.path.dirname(os.path.realpath(filename))
-        if not os.path.exists(cache_dir):
-            os.makedirs(cache_dir)
-
-        if type(data) is list:
-            data = '\n'.join(data)
-
-        debug_file = open(filename, 'w')
-        debug_file.write(data)
-        debug_file.close()
+        return csv_stats
 
     @staticmethod
     def validate_start_end_years(start_year, end_year, config):
@@ -177,7 +135,68 @@ class SportsDataScraper:
 
         scrape_data = self.scrape(start_year, end_year, read_cache, write_cache)
 
-        print('Writing team stats ({0}-{1}) to file: {2}'.format(start_year, end_year, output_filename))
+        self._dbg_print('Writing team stats ({0}-{1}) to file: {2}'.format(start_year, end_year, output_filename))
 
         if output_filename:
             scrape_data.to_csv(output_filename)
+
+    @staticmethod
+    def _read_cache_data(filename):
+        data = None
+        if os.path.exists(filename):
+            copy_file = open(filename, 'r')
+            data = ''.join(copy_file.readlines())
+            copy_file.close()
+        return data
+
+    @staticmethod
+    def _write_cache_data(data, filename):
+        cache_dir = os.path.dirname(os.path.realpath(filename))
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir)
+
+        if type(data) is list:
+            data = '\n'.join(data)
+
+        debug_file = open(filename, 'w')
+        debug_file.write(data)
+        debug_file.close()
+
+    def _get_base_cache_path_for_sport(self):
+        return os.path.join(os.path.curdir, 'cache', self._config.league_name)
+
+    def _scroll_to_element(self, element):
+        # self._dbg_print('scrolling element "{0}" into view...'.format(element.text))
+
+        if self._debug:
+            if element and element.screenshot_as_png:
+                element.screenshot('scroll_to_me.png')
+            else:
+                self._dbg_print('Tried to screenshot element with text "{0}", but can\'t find it!'.format(element.text))
+
+        driver = self._driver
+        driver.execute_script('arguments[0].scrollIntoView(true);', element)
+        driver.execute_script('window.scrollBy(0, -250);')
+
+    def _hover_element(self, element):
+        try:
+
+            # self._dbg_print('trying to hover to element with text "{0}"...'.format(element.text))
+            driver = self._driver
+
+            if self._debug:
+                if element and element.screenshot_as_png:
+                    element.screenshot('hover_me.png')
+                else:
+                    self._dbg_print(
+                        'Tried to screenshot element with text "{0}", but can\'t find it!'.format(element.text))
+
+            hov = ActionChains(driver).move_to_element(element)
+            hov.perform()
+        except Exception as e:
+            print(e)
+            pass
+
+    def _dbg_print(self, s):
+        if self._debug:
+            print('[{0}]:\t{1}'.format(time.asctime(time.localtime(time.time())), s))
