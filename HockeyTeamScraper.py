@@ -62,7 +62,12 @@ class HockeyTeamScraper(SportsDataScraper):
             return list(csv.DictReader(in_file))
 
     def get_all_identities_for_team(self, abbr):
-        links = self.get_element_by_css(url=self.__url_base + abbr, css='#' + abbr + ' > tbody td:nth-child(3)')
+        ret_val = []
+        league = self.get_element_by_css(url=self.__url_base + abbr, css='#' + abbr + ' > tbody td:nth-child(2)').text
+        links = self.get_elements_by_css(url=self.__url_base + abbr, css='#' + abbr + ' > tbody td:nth-child(3)')
+
+        self._dbg_print('Found {0} seasons for team {1}.'.format(len(links), abbr))
+
         for link in links:
             self._dbg_print('found a link with text = "' + link.get_attribute('innerHTML') + '"')
 
@@ -71,7 +76,8 @@ class HockeyTeamScraper(SportsDataScraper):
             reg = re.match(link_pattern, inner_html)
             if reg:
                 abbrev, year, name, made_playoffs = reg.groups()
-                return year, abbrev, name, len(made_playoffs) > 0
+                ret_val.append([year, league, abbrev, name, len(made_playoffs) > 0])
+        return ret_val
 
     def __init_team_names(self, read_cache=True, write_cache=True, cache_filename=None):
         team_names = set()  # list of (abbreviation, full_name) tuples
@@ -97,12 +103,13 @@ class HockeyTeamScraper(SportsDataScraper):
                     abbrev = regex_result.groups()[0]
                     team_names.add((abbrev, name))
 
-            for abbr, name in team_names:
+            for abbr, name in list(team_names):
                 team_abbrevs = self.get_all_identities_for_team(abbr)  # will eval to False if not found
                 if team_abbrevs:
-                    team_identities.append(team_abbrevs)
+                    for a in team_abbrevs:
+                        team_identities.append(a)
 
-            cached_stats = 'Year,Abbrev,Name,Made_Playoffs\n'
+            cached_stats = 'Year,League,Abbrev,Name,Made_Playoffs\n'
             for rv in sorted(team_identities[:-1]):  # all except the last, so there's not a trailing newline
                 cached_stats += ','.join([str(x) for x in rv]) + '\n'
             cached_stats += ','.join([str(x) for x in team_identities[-1]])  # last line only, no newline

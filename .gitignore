@@ -1,0 +1,8 @@
+/.idea/
+/__pycache__/
+/cache/
+**/*.csv
+**/*.xlsx
+**/*.png
+/geckodriver.log
+/runme.py

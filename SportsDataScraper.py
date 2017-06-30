@@ -8,13 +8,11 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.firefox.webdriver import WebDriver
 
 
-def _get_if_needed(self, url):
+def __get_if_needed(self, url):
     if self.current_url != url:
         self.get(url)
 
-
-WebDriver.get_if_needed = _get_if_needed
-
+WebDriver.get_if_needed = __get_if_needed
 
 # TODO: how to support both (many pages > one dataset) and (one page > many datasets)?
 
@@ -45,10 +43,16 @@ class SportsDataScraper:
             pass
 
     def get_element_by_css(self, url, css):
+        ret_val = None
+        elements = self.get_elements_by_css(url, css)
+        if elements and len(elements):
+            ret_val = elements[0]
+        return ret_val
+
+    def get_elements_by_css(self, url, css):
         driver = self._driver
         driver.get_if_needed(url)
-        # TODO: handle not-found case by returning [] or False
-        return driver.find_element_by_css_selector(css)
+        return driver.find_elements_by_css_selector(css)
 
     def get_html_table(self, url, css_table_name):
         return self.get_element_by_css(url, 'div' + css_table_name + ' > div.table_outer_container')
