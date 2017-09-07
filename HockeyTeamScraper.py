@@ -5,10 +5,10 @@ import os
 import re
 
 from SportConfig import SportConfig
-from SportsDataScraper import SportsDataScraper
+from SportsDataScraper import SportsDataScraper as SDS
 
 
-class HockeyTeamScraper(SportsDataScraper):
+class HockeyTeamScraper(SDS):
     @property
     def all_team_names(self):
         if not self.__team_names:
@@ -19,7 +19,7 @@ class HockeyTeamScraper(SportsDataScraper):
 
     __team_names = []
     __url_base = 'http://www.hockey-reference.com/teams/'
-    __team_url_base = __url_base + SportsDataScraper._team_token + '/' + SportsDataScraper._year_token + '.html'
+    __team_url_base = __url_base + SDS._team_token + '/' + SDS._year_token + '.html'
     __url_regex = __url_base + '(.*)/'
     __defunct_tag = ' (defunct)'
 
@@ -30,7 +30,7 @@ class HockeyTeamScraper(SportsDataScraper):
                                  read_cache, write_cache)
 
     def scrape_teams(self, start_year, end_year, teams, read_cache=True, write_cache=True):
-        first, last = SportsDataScraper.validate_start_end_years(start_year, end_year, self._config)
+        first, last = SDS.validate_start_end_years(start_year, end_year, self._config)
 
         for year in range(last, first, -1):
             for team in teams:
@@ -56,7 +56,7 @@ class HockeyTeamScraper(SportsDataScraper):
 
         str_team_data = '\n'.join(team_data)
         if write_cache and cache_filename and team_data:
-            SportsDataScraper._write_cache_data(str_team_data, cache_filename)
+            SDS._write_cache_data(str_team_data, cache_filename)
 
         with io.StringIO(str_team_data) as in_file:
             return list(csv.DictReader(in_file))
@@ -199,8 +199,8 @@ class HockeyTeamScraper(SportsDataScraper):
 
     @staticmethod
     def __get_url(year, team_name):
-        return HockeyTeamScraper.__team_url_base.replace(SportsDataScraper._team_token, team_name) \
-            .replace(SportsDataScraper._year_token, str(year))
+        return HockeyTeamScraper.__team_url_base.replace(SDS._team_token, team_name) \
+            .replace(SDS._year_token, str(year))
 
     def __did_team_exist(self, team, year):
         return len([x for x in self.all_team_names if x['Abbrev'] == team and x['Year'] == str(year)]) > 0

@@ -12,9 +12,8 @@ def __get_if_needed(self, url):
     if self.current_url != url:
         self.get(url)
 
-WebDriver.get_if_needed = __get_if_needed
 
-# TODO: how to support both (many pages > one dataset) and (one page > many datasets)?
+WebDriver.get_if_needed = __get_if_needed
 
 
 class SportsDataScraper:
@@ -57,8 +56,10 @@ class SportsDataScraper:
     def get_html_table(self, url, css_table_name):
         return self.get_element_by_css(url, 'div' + css_table_name + ' > div.table_outer_container')
 
-    def get_csv_table(self, url, css_table_name, read_cache=True, write_cache=True, cache_filename='',
+    def get_csv_table(self, url, css_table_name, read_cache=True,
+                      write_cache=True, cache_filename='',
                       hide_partial_rows=False):
+
         if read_cache and cache_filename:
             cached_stats = SportsDataScraper._read_cache_data(cache_filename)
 
@@ -170,13 +171,14 @@ class SportsDataScraper:
         return os.path.join(os.path.curdir, 'cache', self._config.league_name)
 
     def _scroll_to_element(self, element):
-        # self._dbg_print('scrolling element "{0}" into view...'.format(element.text))
+        # self._dbg_print('scrolling element "{0}" into view...', element.text)
 
         if self._debug:
             if element and element.screenshot_as_png:
                 element.screenshot('scroll_to_me.png')
             else:
-                self._dbg_print('Tried to screenshot element with text "{0}", but can\'t find it!'.format(element.text))
+                self._dbg_print(
+                    'Tried to screenshot element with text "{0}", but can\'t find it!'.format(element.text))
 
         driver = self._driver
         driver.execute_script('arguments[0].scrollIntoView(true);', element)
@@ -184,7 +186,6 @@ class SportsDataScraper:
 
     def _hover_element(self, element):
         try:
-
             # self._dbg_print('trying to hover to element with text "{0}"...'.format(element.text))
             driver = self._driver
 
@@ -193,7 +194,8 @@ class SportsDataScraper:
                     element.screenshot('hover_me.png')
                 else:
                     self._dbg_print(
-                        'Tried to screenshot element with text "{0}", but can\'t find it!'.format(element.text))
+                        'Tried to screenshot element with text "{0}", but can\'t find it!',
+                        element.text)
 
             hov = ActionChains(driver).move_to_element(element)
             hov.perform()
@@ -201,6 +203,7 @@ class SportsDataScraper:
             print(e)
             pass
 
-    def _dbg_print(self, s):
+    def _dbg_print(self, s, *args):
         if self._debug:
-            print('[{0}]:\t{1}'.format(time.asctime(time.localtime(time.time())), s))
+            st = s.format(args)
+            print('[{0}]:\t{1}'.format(time.asctime(time.localtime()), st))
